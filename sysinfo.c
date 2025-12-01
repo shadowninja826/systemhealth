@@ -16,6 +16,7 @@ void print_time() {
     printf("%s\n\n", buf);
 }
 
+/*
 void check_cpu_thermals() {
     printf("=== CPU CORE TEMPERATURES (k10temp) ===\n");
 
@@ -96,6 +97,91 @@ void check_cpu_thermals() {
 
         printf("\n");
         break; // done once k10temp is found
+    }
+
+    closedir(dir);
+}
+*/
+void check_cpu_thermals() {
+    printf("=== CPU CORE TEMPERATURES ===\n");
+
+    DIR *dir = opendir("/sys/class/hwmon");
+    if (!dir) {
+        perror("opendir");
+        return;
+    }
+
+    struct dirent *entry;
+
+    while ((entry = readdir(dir)) != NULL) {
+
+        if (entry->d_type != DT_LNK && entry->d_type != DT_DIR)
+            continue;
+
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        char hwmon_path[256];
+        snprintf(hwmon_path, sizeof(hwmon_path),
+                 "/sys/class/hwmon/%s", entry->d_name);
+
+        // Read the sensor name
+        char name_file[300];
+        snprintf(name_file, sizeof(name_file), "%s/name", hwmon_path);
+
+        FILE *fp = fopen(name_file, "r");
+        if (!fp)
+            continue;
+
+        char name[64];
+        if (!fgets(name, sizeof(name), fp)) {
+            fclose(fp);
+            continue;
+        }
+        fclose(fp);
+
+        name[strcspn(name, "\n")] = 0;
+
+        // Accept Intel (coretemp) or AMD (k10temp)
+        int is_amd = strcmp(name, "k10temp") == 0;
+        int is_intel = strcmp(name, "coretemp") == 0;
+
+        if (!is_amd && !is_intel)
+            continue;
+
+        printf("Found CPU sensor: %s (%s)\n\n", name, entry->d_name);
+
+        // Loop temps
+        for (int i = 1; i <= 20; i++) {
+            char temp_file[300];
+            snprintf(temp_file, sizeof(temp_file),
+                     "%s/temp%d_input", hwmon_path, i);
+
+            fp = fopen(temp_file, "r");
+            if (!fp)
+                continue;
+
+            int temp_mdeg;
+            if (fscanf(fp, "%d", &temp_mdeg) == 1) {
+                float tempC = temp_mdeg / 1000.0f;
+
+                if (is_amd) {
+                    switch (i) {
+                        case 1: printf("Tctl/Tdie: %.1f°C\n", tempC); break;
+                        case 2: printf("CCD1: %.1f°C\n", tempC); break;
+                        case 3: printf("CCD2: %.1f°C\n", tempC); break;
+                        default: printf("Temp%d: %.1f°C\n", i, tempC);
+                    }
+                } else if (is_intel) {
+                    printf("Core %d: %.1f°C\n", i - 1, tempC);
+                }
+            }
+
+            fclose(fp);
+        }
+
+        printf("\n");
+        break; // only print the first valid sensor
     }
 
     closedir(dir);
